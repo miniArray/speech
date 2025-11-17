@@ -1,0 +1,30 @@
+{
+  "name": "elevenlabs-cli",
+  "version": "1.0.0",
+  "description": "ElevenLabs CLI for text-to-speech and speech-to-text",
+  "type": "module",
+  "bin": {
+    "tts": "./dist/tts.js",
+    "stt": "./dist/stt.js"
+  },
+  "scripts": {
+    "build": "bun build src/tts-index.ts --outfile dist/tts.js --target node && bun build src/stt-index.ts --outfile dist/stt.js --target node && chmod +x dist/*.js",
+    "dev:tts": "bun --watch src/tts-index.ts",
+    "dev:stt": "bun --watch src/stt-index.ts",
+    "clean": "rm -rf dist"
+  },
+  "keywords": ["elevenlabs", "tts", "stt", "text-to-speech", "speech-to-text", "transcription", "vad", "cli"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "elevenlabs": "npm:@elevenlabs/elevenlabs-js@latest",
+    "commander": "^12.1.0",
+    "chalk": "^5.3.0",
+    "ora": "^8.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "bun-types": "latest",
+    "typescript": "^5.3.3"
+  }
+}
