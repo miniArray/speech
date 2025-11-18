@@ -4,13 +4,14 @@ import { Command } from "commander";
 import chalk from "chalk";
 import ora, { type Ora } from "ora";
 import { createAudioRecorder } from "./stt/audio.js";
-import { ElevenLabsTranscriber } from "./stt/transcription.js";
+import { Transcriber, type TranscriptionProvider } from "./stt/transcription.js";
 import * as readline from "readline";
 
 type RecordingMode = "manual";
 
 type CLIOptions = {
   mode: RecordingMode;
+  provider?: TranscriptionProvider;
   model?: string;
   language?: string;
   output?: string;
@@ -38,7 +39,7 @@ function setupSignalHandlers(cleanup: () => void): void {
 
 
 async function recordManual(
-  transcriber: ElevenLabsTranscriber,
+  transcriber: Transcriber,
   options: CLIOptions
 ): Promise<void> {
   console.error(
@@ -124,33 +125,45 @@ async function main(): Promise<void> {
 
   program
     .name("stt")
-    .description("Speech-to-text CLI with VAD and ElevenLabs")
+    .description("Speech-to-text CLI with Whisper (local) or ElevenLabs (cloud)")
     .version("1.0.0")
+    .option(
+      "-p, --provider <type>",
+      "Provider: whisper (local, default) or elevenlabs (cloud)",
+      "whisper"
+    )
     .option(
       "-m, --mode <type>",
       "Recording mode (only manual supported currently)",
       "manual"
     )
-    .option("--model <id>", "ElevenLabs model ID", "scribe_v1")
+    .option("--model <value>", "Model: whisper path or elevenlabs model ID")
     .option("--language <code>", "Language code (e.g., en, es, fr)")
     .option("-o, --output <file>", "Output file for transcription")
     .option("--json", "Output as JSON")
     .option("--timestamps", "Include word timestamps (if available)")
     .action(async (options: CLIOptions) => {
       try {
+        const provider = options.provider || "whisper";
         const apiKey = process.env.ELEVENLABS_API_KEY;
 
-        if (!apiKey) {
+        // Check for API key if using ElevenLabs
+        if (provider === "elevenlabs" && !apiKey) {
           console.error(
-            chalk.red("Error: ELEVENLABS_API_KEY environment variable not set")
+            chalk.red("Error: ELEVENLABS_API_KEY required for ElevenLabs provider")
+          );
+          console.error(
+            chalk.yellow("Tip: Use --provider whisper for offline transcription")
           );
           process.exit(1);
         }
 
-        const transcriber = new ElevenLabsTranscriber({
-          apiKey,
-          model: options.model,
+        const transcriber = new Transcriber({
+          provider,
+          modelPath: provider === "whisper" ? options.model : undefined,
+          model: provider === "elevenlabs" ? options.model : undefined,
           language: options.language,
+          apiKey,
         });
 
         currentMode = options.mode;

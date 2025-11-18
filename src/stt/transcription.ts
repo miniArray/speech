@@ -1,10 +1,16 @@
-import { ElevenLabsClient } from "elevenlabs";
-import { Readable } from "stream";
+import { spawn } from "child_process";
+import { writeFileSync, unlinkSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+
+export type TranscriptionProvider = "whisper" | "elevenlabs";
 
 export type TranscriptionOptions = {
-  apiKey: string;
+  provider?: TranscriptionProvider;
   model?: string;
   language?: string;
+  modelPath?: string;
+  apiKey?: string;
 };
 
 export type TranscriptionResult = {
@@ -49,49 +55,129 @@ function pcmToWav(pcmBuffer: Buffer, sampleRate: number = 16000, channels: numbe
   return Buffer.concat([wavHeader, pcmBuffer]);
 }
 
-export class ElevenLabsTranscriber {
-  private client: ElevenLabsClient;
+class WhisperProvider {
+  private modelPath: string;
+  private language?: string;
+
+  constructor(options: TranscriptionOptions = {}) {
+    const homeDir = process.env.HOME || "~";
+    this.modelPath = options.modelPath ||
+      process.env.WHISPER_MODEL_PATH ||
+      `${homeDir}/.local/share/whisper/models/ggml-tiny.en.bin`;
+    this.language = options.language || "en";
+  }
+
+  async transcribe(audioBuffer: Buffer): Promise<TranscriptionResult> {
+    const wavBuffer = pcmToWav(audioBuffer, 16000, 1);
+    const tempFile = join(tmpdir(), `whisper-${Date.now()}.wav`);
+    writeFileSync(tempFile, wavBuffer);
+
+    try {
+      return await this.runWhisper(tempFile);
+    } finally {
+      try {
+        unlinkSync(tempFile);
+      } catch (e) {
+        // Ignore cleanup errors
+      }
+    }
+  }
+
+  private async runWhisper(audioFile: string): Promise<TranscriptionResult> {
+    return new Promise((resolve, reject) => {
+      const args = [
+        "-m", this.modelPath,
+        "-f", audioFile,
+        "-nt",  // No timestamps
+        "-l", this.language || "en",
+      ];
+
+      const process = spawn("whisper-cpp", args);
+      let stdout = "";
+      let stderr = "";
+
+      process.stdout?.on("data", (data) => {
+        stdout += data.toString();
+      });
+
+      process.stderr?.on("data", (data) => {
+        stderr += data.toString();
+      });
+
+      process.on("close", (code) => {
+        if (code !== 0) {
+          reject(new Error(`Whisper failed with code ${code}: ${stderr}`));
+          return;
+        }
+
+        const lines = stdout.split("\n");
+        const textLines = lines
+          .filter(line => !line.startsWith("[") && line.trim().length > 0)
+          .map(line => line.trim());
+        const text = textLines.join(" ").trim();
+
+        resolve({ text });
+      });
+
+      process.on("error", (error) => {
+        reject(new Error(`Failed to run whisper: ${error.message}`));
+      });
+    });
+  }
+}
+
+class ElevenLabsProvider {
+  private apiKey: string;
   private model: string;
   private language?: string;
 
   constructor(options: TranscriptionOptions) {
-    this.client = new ElevenLabsClient({ apiKey: options.apiKey });
+    if (!options.apiKey) {
+      throw new Error("ElevenLabs provider requires apiKey");
+    }
+    this.apiKey = options.apiKey;
     this.model = options.model || "scribe_v1";
     this.language = options.language;
   }
 
   async transcribe(audioBuffer: Buffer): Promise<TranscriptionResult> {
-    try {
-      // Convert PCM to WAV format with proper headers
-      const wavBuffer = pcmToWav(audioBuffer, 16000, 1);
+    const { ElevenLabsClient } = await import("elevenlabs");
+    const client = new ElevenLabsClient({ apiKey: this.apiKey });
 
-      // Convert Buffer to Blob for the API
-      const blob = new Blob([wavBuffer], { type: "audio/wav" });
+    const wavBuffer = pcmToWav(audioBuffer, 16000, 1);
+    const blob = new Blob([wavBuffer], { type: "audio/wav" });
+    const file = new File([blob], "audio.wav", { type: "audio/wav" });
 
-      // Create a File from the Blob
-      const file = new File([blob], "audio.wav", { type: "audio/wav" });
+    const result = await client.speechToText.convert({
+      file,
+      modelId: this.model,
+      ...(this.language && { language: this.language }),
+    });
 
-      const result = await this.client.speechToText.convert({
-        file,
-        modelId: this.model,
-        ...(this.language && { language: this.language }),
-      });
+    return { text: result.text };
+  }
+}
 
-      return {
-        text: result.text,
-        // Add additional fields if available in the response
-      };
-    } catch (error) {
-      if (error instanceof Error) {
-        throw new Error(`Transcription failed: ${error.message}`);
-      }
-      throw error;
+export class Transcriber {
+  private provider: WhisperProvider | ElevenLabsProvider;
+
+  constructor(options: TranscriptionOptions = {}) {
+    const providerType = options.provider || "whisper";
+
+    if (providerType === "elevenlabs") {
+      this.provider = new ElevenLabsProvider(options);
+    } else {
+      this.provider = new WhisperProvider(options);
     }
+  }
+
+  async transcribe(audioBuffer: Buffer): Promise<TranscriptionResult> {
+    return this.provider.transcribe(audioBuffer);
   }
 
   async transcribeWithRetry(
     audioBuffer: Buffer,
-    maxRetries: number = 3
+    maxRetries: number = 2
   ): Promise<TranscriptionResult> {
     let lastError: Error | null = null;
 
@@ -102,8 +188,7 @@ export class ElevenLabsTranscriber {
         lastError = error as Error;
 
         if (attempt < maxRetries - 1) {
-          const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
-          await new Promise((resolve) => setTimeout(resolve, delay));
+          await new Promise((resolve) => setTimeout(resolve, 500));
         }
       }
     }
@@ -113,3 +198,6 @@ export class ElevenLabsTranscriber {
     );
   }
 }
+
+// Legacy export for backwards compatibility
+export const WhisperTranscriber = Transcriber;

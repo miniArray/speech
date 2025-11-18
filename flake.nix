@@ -17,6 +17,9 @@
             # Audio recording (for STT)
             sox
 
+            # Speech-to-text (whisper-cpp)
+            whisper-cpp
+
             # Runtime
             bun
 
@@ -35,18 +38,22 @@
             echo ""
             echo "Available tools:"
             echo "  - sox: Audio recording ($(sox --version 2>&1 | head -n1))"
+            echo "  - whisper-cpp: Speech-to-text (local, offline)"
             echo "  - bun: Runtime ($(bun --version))"
             echo ""
             echo "Quick start:"
             echo "  bun install    # Install dependencies"
             echo "  bun run build  # Build both tts and stt"
             echo "  echo 'Hello' | bun dist/tts.js | mpv -"
-            echo "  bun dist/stt.js  # Start speech-to-text"
+            echo "  bun dist/stt.js  # Start speech-to-text (whisper-cpp)"
+            echo ""
+            echo "💡 STT now uses whisper-cpp (local, offline, fast!)"
+            echo "💡 TTS still uses ElevenLabs API"
             echo ""
 
-            # Check for API key
+            # Check for API key (only needed for TTS now)
             if [ -z "$ELEVENLABS_API_KEY" ]; then
-              echo "⚠️  ELEVENLABS_API_KEY not set"
+              echo "⚠️  ELEVENLABS_API_KEY not set (needed for TTS only)"
               echo "   Set it in .envrc.local or globally"
               echo ""
             else
