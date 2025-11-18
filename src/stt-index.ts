@@ -4,7 +4,10 @@ import { Command } from "commander";
 import chalk from "chalk";
 import ora, { type Ora } from "ora";
 import { createAudioRecorder } from "./stt/audio.js";
-import { Transcriber, type TranscriptionProvider } from "./stt/transcription.js";
+import {
+  Transcriber,
+  type TranscriptionProvider,
+} from "./stt/transcription.js";
 import * as readline from "readline";
 
 type RecordingMode = "manual";
@@ -37,13 +40,12 @@ function setupSignalHandlers(cleanup: () => void): void {
   });
 }
 
-
 async function recordManual(
   transcriber: Transcriber,
-  options: CLIOptions
+  options: CLIOptions,
 ): Promise<void> {
   console.error(
-    chalk.cyan("\n💡 Press Enter to stop recording and transcribe.\n")
+    chalk.cyan("\n💡 Press Enter to stop recording and transcribe.\n"),
   );
 
   spinner = ora({
@@ -69,33 +71,19 @@ async function recordManual(
   setupSignalHandlers(cleanup);
 
   rl.on("line", async () => {
-    if (spinner) spinner.text = chalk.yellow("Finishing recording...");
+    if (spinner) spinner.text = chalk.yellow("Processing...");
 
     // Wait for audio buffers to drain before stopping
-    // This ensures audio in the pipeline reaches SOX
-    await new Promise(resolve => setTimeout(resolve, 1500));
-
-    if (spinner) spinner.text = chalk.yellow("Processing...");
+    // 1 second ensures we capture all speech without cutting off
+    await new Promise((resolve) => setTimeout(resolve, 750));
 
     try {
       // Stop recorder and get all audio data
       const audioBuffer = await recorder.stop();
 
-      // Debug: Log buffer size
-      console.error(chalk.gray(`\nCaptured ${audioBuffer.length} bytes of audio`));
-
-      // Debug: Save raw audio for inspection
-      const debugPath = `/tmp/stt-debug-${Date.now()}.raw`;
-      require("fs").writeFileSync(debugPath, audioBuffer);
-      console.error(chalk.gray(`Raw audio saved to: ${debugPath}`));
-
       const result = await transcriber.transcribeWithRetry(audioBuffer);
 
       if (spinner) spinner.succeed(chalk.green("✓ Transcription complete"));
-
-      // Debug: Show what we got
-      console.error(chalk.gray(`Transcription result: "${result.text}"`));
-      console.error(chalk.gray(`Text length: ${result.text?.length || 0} characters`));
 
       if (options.json) {
         console.log(JSON.stringify({ text: result.text }, null, 2));
@@ -104,7 +92,11 @@ async function recordManual(
         if (result.text && result.text.trim()) {
           console.log(result.text);
         } else {
-          console.error(chalk.yellow("⚠️  No transcription returned (audio may be too short)"));
+          console.error(
+            chalk.yellow(
+              "!  No transcription returned (audio may be too short)",
+            ),
+          );
         }
       }
 
@@ -113,7 +105,7 @@ async function recordManual(
       if (spinner) spinner.fail(chalk.red("Transcription failed"));
       console.error(
         chalk.red("Error:"),
-        error instanceof Error ? error.message : error
+        error instanceof Error ? error.message : error,
       );
       process.exit(1);
     }
@@ -125,17 +117,19 @@ async function main(): Promise<void> {
 
   program
     .name("stt")
-    .description("Speech-to-text CLI with Whisper (local) or ElevenLabs (cloud)")
+    .description(
+      "Speech-to-text CLI with Whisper (local) or ElevenLabs (cloud)",
+    )
     .version("1.0.0")
     .option(
       "-p, --provider <type>",
       "Provider: whisper (local, default) or elevenlabs (cloud)",
-      "whisper"
+      "whisper",
     )
     .option(
       "-m, --mode <type>",
       "Recording mode (only manual supported currently)",
-      "manual"
+      "manual",
     )
     .option("--model <value>", "Model: whisper path or elevenlabs model ID")
     .option("--language <code>", "Language code (e.g., en, es, fr)")
@@ -150,10 +144,14 @@ async function main(): Promise<void> {
         // Check for API key if using ElevenLabs
         if (provider === "elevenlabs" && !apiKey) {
           console.error(
-            chalk.red("Error: ELEVENLABS_API_KEY required for ElevenLabs provider")
+            chalk.red(
+              "Error: ELEVENLABS_API_KEY required for ElevenLabs provider",
+            ),
           );
           console.error(
-            chalk.yellow("Tip: Use --provider whisper for offline transcription")
+            chalk.yellow(
+              "Tip: Use --provider whisper for offline transcription",
+            ),
           );
           process.exit(1);
         }
@@ -172,7 +170,7 @@ async function main(): Promise<void> {
         if (spinner) spinner.fail(chalk.red("Failed to start"));
         console.error(
           chalk.red("Error:"),
-          error instanceof Error ? error.message : error
+          error instanceof Error ? error.message : error,
         );
         process.exit(1);
       }
