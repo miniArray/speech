@@ -92,7 +92,7 @@ class WhisperProvider {
         "-l", this.language || "en",
       ];
 
-      const process = spawn("whisper-cpp", args);
+      const process = spawn("whisper-cli", args);
       let stdout = "";
       let stderr = "";
 
