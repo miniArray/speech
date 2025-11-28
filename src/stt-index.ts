@@ -3,7 +3,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import ora, { type Ora } from "ora";
-import { createAudioRecorder } from "./stt/audio.js";
+import { createAudioRecorder, type AudioRecorder } from "./stt/audio.js";
 import {
   Transcriber,
   type TranscriptionProvider,
@@ -20,23 +20,70 @@ type CLIOptions = {
   output?: string;
   json?: boolean;
   timestamps?: boolean;
+  quiet?: boolean;
 };
 
 let spinner: Ora | null = null;
 let isRecording = false;
-let currentMode: RecordingMode = "vad";
+let currentMode: RecordingMode = "manual";
+
+// Global state for signal handling
+let activeRecorder: AudioRecorder | null = null;
+let activeTranscriber: Transcriber | null = null;
+let activeOptions: CLIOptions | null = null;
+let isProcessingSignal = false;
+
+// Quiet mode: auto-detect when not in TTY (for piping to wtype, etc.)
+const isQuietMode = (): boolean => !process.stdin.isTTY;
+
+async function handleSignalTranscription(): Promise<void> {
+  if (isProcessingSignal || !activeRecorder || !activeTranscriber) {
+    process.exit(0);
+    return;
+  }
+
+  isProcessingSignal = true;
+  const quiet = isQuietMode();
+
+  if (spinner) spinner.stop();
+  if (!quiet) {
+    console.error(chalk.yellow("\nStopping recording..."));
+  }
+
+  try {
+    // Wait for audio buffers to drain before stopping
+    // Ensures we capture all speech without cutting off
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    const audioBuffer = await activeRecorder.stop();
+    const result = await activeTranscriber.transcribeWithRetry(audioBuffer);
+
+    if (result.text && result.text.trim()) {
+      if (activeOptions?.json) {
+        console.log(JSON.stringify({ text: result.text }, null, 2));
+      } else {
+        console.log(result.text);
+      }
+    }
+    process.exit(0);
+  } catch (error) {
+    if (!quiet) {
+      console.error(
+        chalk.red("Error:"),
+        error instanceof Error ? error.message : error,
+      );
+    }
+    process.exit(1);
+  }
+}
 
 function setupSignalHandlers(cleanup: () => void): void {
   process.on("SIGINT", () => {
-    if (spinner) spinner.stop();
-    console.error(chalk.yellow("\n\nShutting down gracefully..."));
-    cleanup();
-    setTimeout(() => process.exit(0), 500);
+    handleSignalTranscription();
   });
 
   process.on("SIGTERM", () => {
-    cleanup();
-    process.exit(0);
+    handleSignalTranscription();
   });
 }
 
@@ -44,20 +91,31 @@ async function recordManual(
   transcriber: Transcriber,
   options: CLIOptions,
 ): Promise<void> {
-  console.error(
-    chalk.cyan("\n💡 Press Enter to stop recording and transcribe.\n"),
-  );
+  const quiet = isQuietMode();
 
-  spinner = ora({
-    text: chalk.green("🎤 Recording..."),
-    stream: process.stderr,
-  }).start();
+  // Store global state for signal handlers
+  activeTranscriber = transcriber;
+  activeOptions = options;
+
+  if (!quiet) {
+    console.error(
+      chalk.cyan("\n💡 Press Enter or Ctrl+C to stop recording and transcribe.\n"),
+    );
+
+    spinner = ora({
+      text: chalk.green("🎤 Recording..."),
+      stream: process.stderr,
+    }).start();
+  }
 
   // Create recorder (starts immediately)
   const recorder = createAudioRecorder({
     sampleRate: 16000,
     channels: 1,
   });
+
+  // Store recorder for signal handlers
+  activeRecorder = recorder;
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -75,7 +133,7 @@ async function recordManual(
 
     // Wait for audio buffers to drain before stopping
     // 1 second ensures we capture all speech without cutting off
-    await new Promise((resolve) => setTimeout(resolve, 750));
+    await new Promise((resolve) => setTimeout(resolve, 1000));
 
     try {
       // Stop recorder and get all audio data
@@ -91,7 +149,7 @@ async function recordManual(
         // Output to stdout (not stderr)
         if (result.text && result.text.trim()) {
           console.log(result.text);
-        } else {
+        } else if (!quiet) {
           console.error(
             chalk.yellow(
               "!  No transcription returned (audio may be too short)",
@@ -103,10 +161,12 @@ async function recordManual(
       process.exit(0);
     } catch (error) {
       if (spinner) spinner.fail(chalk.red("Transcription failed"));
-      console.error(
-        chalk.red("Error:"),
-        error instanceof Error ? error.message : error,
-      );
+      if (!quiet) {
+        console.error(
+          chalk.red("Error:"),
+          error instanceof Error ? error.message : error,
+        );
+      }
       process.exit(1);
     }
   });

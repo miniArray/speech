@@ -64,38 +64,44 @@
         };
 
         # Package the CLI application
-        packages.default = pkgs.stdenv.mkDerivation {
-          name = "elevenlabs-cli";
+        packages.default = pkgs.buildNpmPackage {
+          pname = "elevenlabs-cli";
           version = "1.0.0";
           src = ./.;
 
-          buildInputs = [ pkgs.bun pkgs.sox ];
+          npmDepsHash = "sha256-X+Xzt3laOo/JebT6aSLFMUVTixeuPz4DE/rgPUdIbis=";
+
+          nativeBuildInputs = [ pkgs.bun ];
 
           buildPhase = ''
-            export HOME=$TMPDIR
-            bun install --frozen-lockfile
-            bun run build
+            runHook preBuild
+            bun build src/tts-index.ts --outfile dist/tts.js --target node
+            bun build src/stt-index.ts --outfile dist/stt.js --target node
+            chmod +x dist/*.js
+            runHook postBuild
           '';
 
           installPhase = ''
-            mkdir -p $out/bin
-            cp -r dist $out/
-            cp -r node_modules $out/
+            runHook preInstall
+            mkdir -p $out/bin $out/lib
+            cp -r dist $out/lib/
+            cp -r node_modules $out/lib/
 
             # Create TTS wrapper
             cat > $out/bin/tts <<EOF
-            #!${pkgs.bash}/bin/bash
-            exec ${pkgs.bun}/bin/bun $out/dist/tts.js "\$@"
-            EOF
+#!/usr/bin/env bash
+exec ${pkgs.bun}/bin/bun $out/lib/dist/tts.js "\$@"
+EOF
 
             # Create STT wrapper
             cat > $out/bin/stt <<EOF
-            #!${pkgs.bash}/bin/bash
-            export PATH="${pkgs.sox}/bin:\$PATH"
-            exec ${pkgs.bun}/bin/bun $out/dist/stt.js "\$@"
-            EOF
+#!/usr/bin/env bash
+export PATH="${pkgs.lib.makeBinPath [ pkgs.sox pkgs.whisper-cpp ]}:\$PATH"
+exec ${pkgs.bun}/bin/bun $out/lib/dist/stt.js "\$@"
+EOF
 
             chmod +x $out/bin/tts $out/bin/stt
+            runHook postInstall
           '';
 
           meta = {
