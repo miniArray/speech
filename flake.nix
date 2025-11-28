@@ -10,6 +10,12 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+
+        # Whisper model (declaratively managed)
+        whisperModel = pkgs.fetchurl {
+          url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin";
+          hash = "sha256-kh5M+Ghv3Zk9zQgaXaW2w2W/3hFi5ysI11rHUomSCx8=";
+        };
       in
       {
         devShells.default = pkgs.mkShell {
@@ -33,6 +39,9 @@
           shellHook = ''
             # Set library path for ONNX Runtime (VAD)
             export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:$LD_LIBRARY_PATH"
+
+            # Whisper model path (declaratively managed by Nix)
+            export WHISPER_MODEL_PATH="${whisperModel}"
 
             echo "🎙️  ElevenLabs CLI Development Environment"
             echo ""
@@ -97,6 +106,7 @@ EOF
             cat > $out/bin/stt <<EOF
 #!/usr/bin/env bash
 export PATH="${pkgs.lib.makeBinPath [ pkgs.sox pkgs.whisper-cpp ]}:\$PATH"
+export WHISPER_MODEL_PATH="${whisperModel}"
 exec ${pkgs.bun}/bin/bun $out/lib/dist/stt.js "\$@"
 EOF
 
